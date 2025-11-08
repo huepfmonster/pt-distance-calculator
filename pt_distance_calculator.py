@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Wien Öffi-Kilometer – v4
+Wien Öffi-Kilometer – v5
 
-Änderungen ggü. v3:
-- Liest GTFS direkt aus einem ORDNER (kein Entzippen). Default: ./gtfs
-- Erkennt automatisch, ob shape_dist_traveled in Metern oder Kilometern ist
-- Schreibt in der CSV die Spalte "km" zuverlässig in KILOMETERN
-- Robuster bei Stationsnamen (mehrere Stop-ID-Kandidaten werden berücksichtigt)
+Änderungen ggü. v4:
+- Standardbetrieb OHNE Parameter: verarbeitet **alle** .csv-Dateien im Unterordner `./inputs/`
+  und schreibt Ergebnisse nach `./results/<name>_result.csv`.
+- Optional weiterhin: einzelnes File per `--legs <dateiname.csv>` angeben. Es wird in `./inputs/` gesucht
+  und das Resultat nach `./results/<name>_result.csv` geschrieben.
+- GTFS kommt aus `./gtfs` (Standard, kein Entzippen).
+- Einheitenerkennung für `shape_dist_traveled` (m vs. km) bleibt erhalten.
 
-Nutzung:
-    python wien_offi_kilometer_v4.py --legs legs.csv
-    # optional: --gtfs_dir ./gtfs  (Default ist bereits ./gtfs)
+Beispiele:
+    # Batch-Modus (alle CSVs in ./inputs)
+    python wien_offi_kilometer_v5.py
 
-legs.csv (Beispiel):
+    # Einzelnes File (wird in ./inputs/ gesucht)
+    python wien_offi_kilometer_v5.py --legs team4.csv
+
+CSV-Format (Beispiel):
     mode,from_stop,to_stop,hint_route_id
     u-bahn,Karlsplatz,Stephansplatz,U1
     tram,Schottentor,Franz-Josefs-Bahnhof,5
 
-Ausgabe:
-    - kilometer_auswertung.csv  (Spalte "km" in Kilometern, 3 Nachkommastellen)
+Ausgabe je Datei:
+    ./results/<name>_result.csv  (Spalte "km" in Kilometern, 3 Nachkommastellen)
 """
 
 import os
+import glob
 import pandas as pd
 import numpy as np
 from math import radians, sin, cos, asin, sqrt
@@ -238,16 +244,49 @@ def compute_legs_km(gtfs_dir: str, legs_csv: str) -> Tuple[pd.DataFrame, float]:
     df = pd.DataFrame(out_rows)
     return df, round(total_m / 1000.0, 3)
 
-# -------------------- CLI --------------------
+# -------------------- Batch/CLI --------------------
+def ensure_dirs():
+    os.makedirs("./inputs", exist_ok=True)
+    os.makedirs("./results", exist_ok=True)
+
+
+def process_one(gtfs_dir: str, in_path: str, out_dir: str = "./results"):
+    base = os.path.basename(in_path)
+    name, ext = os.path.splitext(base)
+    out_path = os.path.join(out_dir, f"{name}_result.csv")
+    df, total_km = compute_legs_km(gtfs_dir, in_path)
+    df.to_csv(out_path, index=False)
+    print(f"[OK] {base} -> {name}_result.csv | Summe: {total_km:.3f} km")
+
+
 if __name__ == "__main__":
     import argparse
+    ensure_dirs()
+
     p = argparse.ArgumentParser(description="Kilometer im Wiener Öffi-Netz aus GTFS-Ordner + legs.csv berechnen.")
     p.add_argument("--gtfs_dir", default="./gtfs", help="Pfad zum GTFS-Ordner (mit stops.txt usw.). Default: ./gtfs")
-    p.add_argument("--legs", required=True, help="CSV mit Fahrten")
-    p.add_argument("--out", default="kilometer_auswertung.csv", help="Output-CSV")
+    p.add_argument("--legs", help="Dateiname in ./inputs (z.B. team4.csv). Wenn nicht gesetzt: Batch-Modus über alle CSVs in ./inputs")
     args = p.parse_args()
 
-    df, total_km = compute_legs_km(args.gtfs_dir, args.legs)
-    df.to_csv(args.out, index=False)
-    print(f"Gesamtkilometer: {total_km:.3f} km")
-    print(f"Details in: {args.out}")
+    inputs_dir = "./inputs"
+    results_dir = "./results"
+
+    if args.legs:
+        # Einzeldatei: in ./inputs suchen (falls kein Pfad angegeben)
+        candidate = args.legs
+        if not os.path.isabs(candidate) and os.path.dirname(candidate) == "":
+            candidate = os.path.join(inputs_dir, candidate)
+        if not os.path.exists(candidate):
+            raise FileNotFoundError(f"Input-Datei nicht gefunden: {candidate}")
+        process_one(args.gtfs_dir, candidate, results_dir)
+    else:
+        # Batch-Modus: alle CSVs in ./inputs*
+        files = sorted(glob.glob(os.path.join(inputs_dir, "*.csv")))
+        if not files:
+            print("Keine CSV-Dateien in ./inputs gefunden. Lege dort z.B. team4.csv ab.")
+        for f in files:
+            try:
+                process_one(args.gtfs_dir, f, results_dir)
+            except Exception as e:
+                base = os.path.basename(f)
+                print(f"[ERR] Fehler bei {base}: {e}")
