@@ -1,6 +1,9 @@
 #gtfs-dateien
 gtfs/*
+gtfs*/
 results/*
+inputs/*
+!inputs/legs-template.csv
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
